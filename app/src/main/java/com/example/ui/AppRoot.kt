@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CellTower
 import androidx.compose.material.icons.filled.Code
@@ -40,6 +41,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.components.CommandExplanationDialog
 import com.example.ui.components.PreFlightConfirmationDialog
+import com.example.ui.components.SmartOptimizationDialog
+import com.example.ui.screens.AiSystemScanScreen
 import com.example.ui.screens.AtCommandScreen
 import com.example.ui.screens.BackupHistoryScreen
 import com.example.ui.screens.CellularEngineeringScreen
@@ -50,6 +53,7 @@ import com.example.ui.screens.PdpContextScreen
 import com.example.ui.screens.PubgLatencyLabScreen
 import com.example.ui.screens.SettingsEditorScreen
 import com.example.ui.screens.SipaDiagnosticsScreen
+import com.example.ui.screens.SmartOptimizationsScreen
 import com.example.ui.screens.TerminalScreen
 import com.example.ui.theme.ElectricCyan
 
@@ -57,9 +61,10 @@ import com.example.ui.theme.ElectricCyan
 fun AppRoot(viewModel: MainViewModel = viewModel()) {
     var selectedNavIndex by remember { mutableIntStateOf(0) }
     var cellularSubTab by remember { mutableIntStateOf(0) } // 0: SIPA, 1: Radio/Cell, 2: AT Cmd, 3: PDP/CID
-    var configSubTab by remember { mutableIntStateOf(0) } // 0: Connection, 1: Audit Log
+    var tuningSubTab by remember { mutableIntStateOf(0) }   // 0: Smart Optimizations, 1: Raw Settings Editor, 2: Command Library
+    var configSubTab by remember { mutableIntStateOf(0) }   // 0: Telnet Connection, 1: Audit Log & Backup
 
-    // Handle back button to return to Overview (index 0) if on other screens
+    // Back button returns to Overview
     BackHandler(enabled = selectedNavIndex != 0) {
         selectedNavIndex = 0
     }
@@ -67,6 +72,7 @@ fun AppRoot(viewModel: MainViewModel = viewModel()) {
     // Modal Dialogs
     val explanationCommand by viewModel.selectedExplanationCommand.collectAsState()
     val preFlightTarget by viewModel.preFlightSetting.collectAsState()
+    val preFlightOptimization by viewModel.preFlightOptimization.collectAsState()
 
     explanationCommand?.let { cmd ->
         CommandExplanationDialog(
@@ -84,6 +90,14 @@ fun AppRoot(viewModel: MainViewModel = viewModel()) {
         )
     }
 
+    preFlightOptimization?.let { opt ->
+        SmartOptimizationDialog(
+            optimization = opt,
+            onConfirm = { viewModel.confirmExecuteOptimization() },
+            onDismiss = { viewModel.cancelOptimizationDialog() }
+        )
+    }
+
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         bottomBar = {
@@ -95,55 +109,55 @@ fun AppRoot(viewModel: MainViewModel = viewModel()) {
                     selected = selectedNavIndex == 0,
                     onClick = { selectedNavIndex = 0 },
                     icon = { Icon(Icons.Default.Router, contentDescription = "Overview") },
-                    label = { Text("Overview", fontSize = 10.sp) },
+                    label = { Text("Overview", fontSize = 9.5.sp) },
                     colors = NavigationBarItemDefaults.colors(indicatorColor = ElectricCyan.copy(alpha = 0.2f)),
                     modifier = Modifier.testTag("nav_overview")
                 )
                 NavigationBarItem(
                     selected = selectedNavIndex == 1,
                     onClick = { selectedNavIndex = 1 },
-                    icon = { Icon(Icons.Default.Terminal, contentDescription = "Terminal") },
-                    label = { Text("Terminal", fontSize = 10.sp) },
+                    icon = { Icon(Icons.Default.AutoAwesome, contentDescription = "AI Scan") },
+                    label = { Text("AI Scan", fontSize = 9.5.sp) },
                     colors = NavigationBarItemDefaults.colors(indicatorColor = ElectricCyan.copy(alpha = 0.2f)),
-                    modifier = Modifier.testTag("nav_terminal")
+                    modifier = Modifier.testTag("nav_ai_scan")
                 )
                 NavigationBarItem(
                     selected = selectedNavIndex == 2,
                     onClick = { selectedNavIndex = 2 },
-                    icon = { Icon(Icons.Default.Code, contentDescription = "Commands") },
-                    label = { Text("Commands", fontSize = 10.sp) },
+                    icon = { Icon(Icons.Default.Tune, contentDescription = "Optimizations") },
+                    label = { Text("Tuning", fontSize = 9.5.sp) },
                     colors = NavigationBarItemDefaults.colors(indicatorColor = ElectricCyan.copy(alpha = 0.2f)),
-                    modifier = Modifier.testTag("nav_commands")
+                    modifier = Modifier.testTag("nav_optimizations")
                 )
                 NavigationBarItem(
                     selected = selectedNavIndex == 3,
                     onClick = { selectedNavIndex = 3 },
-                    icon = { Icon(Icons.Default.CellTower, contentDescription = "Cellular & SIPA") },
-                    label = { Text("Cellular", fontSize = 10.sp) },
-                    colors = NavigationBarItemDefaults.colors(indicatorColor = ElectricCyan.copy(alpha = 0.2f)),
-                    modifier = Modifier.testTag("nav_cellular")
-                )
-                NavigationBarItem(
-                    selected = selectedNavIndex == 4,
-                    onClick = { selectedNavIndex = 4 },
                     icon = { Icon(Icons.Default.Bolt, contentDescription = "PUBG Lab") },
-                    label = { Text("PUBG Lab", fontSize = 10.sp) },
+                    label = { Text("PUBG Lab", fontSize = 9.5.sp) },
                     colors = NavigationBarItemDefaults.colors(indicatorColor = ElectricCyan.copy(alpha = 0.2f)),
                     modifier = Modifier.testTag("nav_pubg")
                 )
                 NavigationBarItem(
+                    selected = selectedNavIndex == 4,
+                    onClick = { selectedNavIndex = 4 },
+                    icon = { Icon(Icons.Default.CellTower, contentDescription = "Cellular & SIPA") },
+                    label = { Text("Cellular", fontSize = 9.5.sp) },
+                    colors = NavigationBarItemDefaults.colors(indicatorColor = ElectricCyan.copy(alpha = 0.2f)),
+                    modifier = Modifier.testTag("nav_cellular")
+                )
+                NavigationBarItem(
                     selected = selectedNavIndex == 5,
                     onClick = { selectedNavIndex = 5 },
-                    icon = { Icon(Icons.Default.Tune, contentDescription = "Tuning") },
-                    label = { Text("Tuning", fontSize = 10.sp) },
+                    icon = { Icon(Icons.Default.Terminal, contentDescription = "Terminal") },
+                    label = { Text("Terminal", fontSize = 9.5.sp) },
                     colors = NavigationBarItemDefaults.colors(indicatorColor = ElectricCyan.copy(alpha = 0.2f)),
-                    modifier = Modifier.testTag("nav_tuning")
+                    modifier = Modifier.testTag("nav_terminal")
                 )
                 NavigationBarItem(
                     selected = selectedNavIndex == 6,
                     onClick = { selectedNavIndex = 6 },
-                    icon = { Icon(Icons.Default.Security, contentDescription = "Connect & Audit") },
-                    label = { Text("Config", fontSize = 10.sp) },
+                    icon = { Icon(Icons.Default.Security, contentDescription = "Config & Audit") },
+                    label = { Text("Config", fontSize = 9.5.sp) },
                     colors = NavigationBarItemDefaults.colors(indicatorColor = ElectricCyan.copy(alpha = 0.2f)),
                     modifier = Modifier.testTag("nav_config")
                 )
@@ -161,17 +175,48 @@ fun AppRoot(viewModel: MainViewModel = viewModel()) {
                     onNavigateToTab = { target ->
                         when (target) {
                             1 -> {
-                                selectedNavIndex = 6 // Config/Connection
+                                selectedNavIndex = 6 // Config
                                 configSubTab = 0
                             }
-                            2 -> selectedNavIndex = 1 // Terminal
-                            6 -> selectedNavIndex = 4 // PUBG Lab
+                            2 -> selectedNavIndex = 5 // Terminal
+                            6 -> selectedNavIndex = 3 // PUBG Lab
                         }
                     }
                 )
-                1 -> TerminalScreen(viewModel = viewModel)
-                2 -> CommandCenterScreen(viewModel = viewModel)
-                3 -> {
+                1 -> AiSystemScanScreen(viewModel = viewModel)
+                2 -> {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        ScrollableTabRow(
+                            selectedTabIndex = tuningSubTab,
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            edgePadding = 12.dp
+                        ) {
+                            Tab(
+                                selected = tuningSubTab == 0,
+                                onClick = { tuningSubTab = 0 },
+                                text = { Text("Smart Optimizations", fontSize = 12.sp) }
+                            )
+                            Tab(
+                                selected = tuningSubTab == 1,
+                                onClick = { tuningSubTab = 1 },
+                                text = { Text("Settings Editor", fontSize = 12.sp) }
+                            )
+                            Tab(
+                                selected = tuningSubTab == 2,
+                                onClick = { tuningSubTab = 2 },
+                                text = { Text("Command Library (A–Q)", fontSize = 12.sp) }
+                            )
+                        }
+
+                        when (tuningSubTab) {
+                            0 -> SmartOptimizationsScreen(viewModel = viewModel)
+                            1 -> SettingsEditorScreen(viewModel = viewModel)
+                            2 -> CommandCenterScreen(viewModel = viewModel)
+                        }
+                    }
+                }
+                3 -> PubgLatencyLabScreen(viewModel = viewModel)
+                4 -> {
                     Column(modifier = Modifier.fillMaxSize()) {
                         ScrollableTabRow(
                             selectedTabIndex = cellularSubTab,
@@ -196,7 +241,7 @@ fun AppRoot(viewModel: MainViewModel = viewModel()) {
                             Tab(
                                 selected = cellularSubTab == 3,
                                 onClick = { cellularSubTab = 3 },
-                                text = { Text("PDP Contexts", fontSize = 12.sp) }
+                                text = { Text("PDP Contexts (CID)", fontSize = 12.sp) }
                             )
                         }
 
@@ -208,8 +253,7 @@ fun AppRoot(viewModel: MainViewModel = viewModel()) {
                         }
                     }
                 }
-                4 -> PubgLatencyLabScreen(viewModel = viewModel)
-                5 -> SettingsEditorScreen(viewModel = viewModel)
+                5 -> TerminalScreen(viewModel = viewModel)
                 6 -> {
                     Column(modifier = Modifier.fillMaxSize()) {
                         ScrollableTabRow(

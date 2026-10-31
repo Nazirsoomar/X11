@@ -16,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CellTower
 import androidx.compose.material.icons.filled.CheckCircle
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -61,6 +63,8 @@ fun OverviewScreen(
     val config by viewModel.currentConfig.collectAsState()
     val sipaDeltas by viewModel.sipaDeltas.collectAsState()
     val cellular by viewModel.cellularMetrics.collectAsState()
+    val diagnostics by viewModel.subsystemDiagnostics.collectAsState()
+    val isScanning by viewModel.isScanning.collectAsState()
 
     Column(
         modifier = Modifier
@@ -76,12 +80,12 @@ fun OverviewScreen(
         ) {
             Column {
                 Text(
-                    text = "UNISOC UDX710 Suite",
+                    text = "UNISOC Router Optimizer",
                     style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Linux 4.14.98 | SIPA Cellular Bearer",
+                    text = "Firmware W22.32.3 | Linux 4.14.98 | UDX710",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -93,37 +97,62 @@ fun OverviewScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
-        // Quick Navigation Hero Card
+        // AI Auto-Scan Status Hero Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Router,
-                        contentDescription = null,
-                        tint = ElectricCyan,
-                        modifier = Modifier.size(28.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = ElectricCyan,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Hardware Profile: UNISOC UDX710",
+                            text = "AI System Diagnostic Engine",
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
                             color = MaterialTheme.colorScheme.onSurface
                         )
-                        Text(
-                            text = "Target Router: ${config.host}:${config.port} via Root Telnet Shell",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    }
+
+                    if (isScanning) {
+                        Text(text = "Scanning...", fontSize = 11.sp, color = ElectricCyan, fontWeight = FontWeight.SemiBold)
+                    } else if (diagnostics.isNotEmpty()) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = SuccessGreen.copy(alpha = 0.2f)
+                        ) {
+                            Text(
+                                text = "${diagnostics.size} Subsystems Scanned",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = SuccessGreen,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "Telnet connect hote hi AI router ka CPU, GPU, RAM, kernel, SIPA, IRQ affinity, TCP, qdisc, MTU, AT commands aur CID profiles automatically scan karta hai.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 17.sp
+                )
 
                 Spacer(modifier = Modifier.height(12.dp))
 
@@ -131,48 +160,43 @@ fun OverviewScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    OutlinedButton(
-                        onClick = { onNavigateToTab(1) }, // Connection
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("nav_connection_btn")
-                    ) {
-                        Text("Connect", fontSize = 12.sp)
-                    }
                     Button(
-                        onClick = { onNavigateToTab(6) }, // PUBG Lab
+                        onClick = { viewModel.triggerAiSystemScan() },
                         colors = ButtonDefaults.buttonColors(containerColor = ElectricCyan),
                         modifier = Modifier
                             .weight(1f)
-                            .testTag("nav_pubg_lab_btn")
+                            .testTag("hero_scan_btn")
                     ) {
-                        Icon(imageVector = Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(imageVector = Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onPrimary)
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("PUBG Lab", fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimary)
+                        Text("Run AI Scan", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onPrimary)
                     }
+
                     OutlinedButton(
-                        onClick = { onNavigateToTab(2) }, // Terminal
+                        onClick = { onNavigateToTab(6) }, // PUBG Lab
                         modifier = Modifier
                             .weight(1f)
-                            .testTag("nav_terminal_btn")
+                            .testTag("hero_pubg_btn")
                     ) {
-                        Text("Terminal", fontSize = 12.sp)
+                        Icon(imageVector = Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("PUBG Lab", fontSize = 11.5.sp)
                     }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         // Real-Time Delta Metrics Card
         SipaRateMetricsCard(delta = sipaDeltas)
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         // Cellular Radio Card
         CellularSignalCard(metrics = cellular)
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         // Verified Environment Specifications
         Card(
@@ -182,13 +206,14 @@ fun OverviewScreen(
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Text(
-                    text = "Historical Environment Specifications",
+                    text = "Verified Hardware & Firmware Profile",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
                     color = ElectricCyan
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 SpecRow(label = "Platform SoC", value = "UNISOC UDX710 (Spreadtrum ARMv7)")
+                SpecRow(label = "Firmware Release", value = "W22.32.3")
                 SpecRow(label = "Kernel Version", value = "Linux 4.14.98 SMP PREEMPT")
                 SpecRow(label = "Userland Shell", value = "BusyBox 1.27.2 (sh-4.4# prompt)")
                 SpecRow(label = "Active Interface", value = "sipa_eth0 (MTU 1420, operstate: up)")

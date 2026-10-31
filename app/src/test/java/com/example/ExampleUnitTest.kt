@@ -1,8 +1,12 @@
 package com.example
 
+import com.example.data.engine.AiSystemScannerEngine
 import com.example.data.mock.UnisocRouterSimulator
+import com.example.data.model.RouterConnectionConfig
 import com.example.data.parser.CellularParser
 import com.example.data.parser.SipaParser
+import com.example.data.telnet.RouterSessionManager
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -84,9 +88,32 @@ TX:
         val sim = UnisocRouterSimulator()
         val unameRes = sim.execute("uname -a")
         assertTrue(unameRes.output.contains("4.14.98"))
+        assertTrue(unameRes.output.contains("W22.32.3"))
         assertTrue(unameRes.output.contains("unisoc-udx710"))
 
         val atRes = sim.execute("atcmd 'AT+CSQ'")
         assertTrue(atRes.output.contains("+CSQ:"))
+    }
+
+    @Test
+    fun testAiSystemScanner() = runBlocking {
+        val sessionManager = RouterSessionManager()
+        sessionManager.connect(RouterConnectionConfig(isSimulated = true))
+
+        val scanner = AiSystemScannerEngine(sessionManager)
+        val diagnostics = scanner.runFullSystemScan()
+
+        assertTrue("Expected at least 10 subsystems scanned", diagnostics.size >= 10)
+        val cpuDiag = diagnostics.firstOrNull { it.id == "diag_cpu" }
+        assertNotNull(cpuDiag)
+        assertTrue(cpuDiag!!.limitations.contains("PMIC") || cpuDiag.limitations.contains("locked"))
+
+        val gpuDiag = diagnostics.firstOrNull { it.id == "diag_gpu" }
+        assertNotNull(gpuDiag)
+        assertTrue(!gpuDiag!!.isSupported)
+
+        val pdpDiag = diagnostics.firstOrNull { it.id == "diag_pdp_bonding" }
+        assertNotNull(pdpDiag)
+        assertTrue(pdpDiag!!.kaam.contains("data session"))
     }
 }

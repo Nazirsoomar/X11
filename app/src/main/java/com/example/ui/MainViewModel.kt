@@ -2,7 +2,9 @@ package com.example.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.engine.AiSystemScannerEngine
 import com.example.data.latency.PubgLatencyLabEngine
+import com.example.data.model.BufferbloatResult
 import com.example.data.model.CellularRadioMetrics
 import com.example.data.model.CommandDefinition
 import com.example.data.model.CommandExecutionResult
@@ -13,6 +15,8 @@ import com.example.data.model.RiskLevel
 import com.example.data.model.RouterConnectionConfig
 import com.example.data.model.SipaDeltaStats
 import com.example.data.model.SipaRawStats
+import com.example.data.model.SmartOptimization
+import com.example.data.model.SubsystemDiagnostic
 import com.example.data.parser.CellularParser
 import com.example.data.parser.SipaParser
 import com.example.data.repository.SettingsRepository
@@ -30,6 +34,7 @@ class MainViewModel : ViewModel() {
     val sessionManager = RouterSessionManager()
     val settingsRepo = SettingsRepository()
     val pubgLab = PubgLatencyLabEngine(sessionManager)
+    val aiScanner = AiSystemScannerEngine(sessionManager)
 
     val connectionStatus: StateFlow<ConnectionStatus> = sessionManager.connectionStatus
     val currentConfig: StateFlow<RouterConnectionConfig> = sessionManager.currentConfig
@@ -37,6 +42,14 @@ class MainViewModel : ViewModel() {
     val auditLog = sessionManager.auditLog
     val terminalStream = sessionManager.terminalStream
     val settings = settingsRepo.settings
+
+    // AI Scanner & Subsystem Diagnosis State
+    val isScanning: StateFlow<Boolean> = aiScanner.isScanning
+    val scanProgress: StateFlow<Float> = aiScanner.scanProgress
+    val scanStatusMessage: StateFlow<String> = aiScanner.scanStatusMessage
+    val subsystemDiagnostics: StateFlow<List<SubsystemDiagnostic>> = aiScanner.subsystemDiagnostics
+    val smartOptimizations: StateFlow<List<SmartOptimization>> = aiScanner.smartOptimizations
+    val bufferbloatResult: StateFlow<BufferbloatResult> = aiScanner.bufferbloatResult
 
     // Real-time SIPA stats & deltas
     private val _currentSipaStats = MutableStateFlow(SipaRawStats())
@@ -64,18 +77,24 @@ class MainViewModel : ViewModel() {
     private val _preFlightSetting = MutableStateFlow<Pair<DiscoveredSetting, String>?>(null)
     val preFlightSetting: StateFlow<Pair<DiscoveredSetting, String>?> = _preFlightSetting.asStateFlow()
 
+    // Pre-flight Smart Optimization dialog state
+    private val _preFlightOptimization = MutableStateFlow<SmartOptimization?>(null)
+    val preFlightOptimization: StateFlow<SmartOptimization?> = _preFlightOptimization.asStateFlow()
+
     private var pollingJob: Job? = null
     private var lastPollTime: Long = System.currentTimeMillis()
     private var prevRawStats: SipaRawStats? = null
 
     init {
-        // Start periodic diagnostic poll when connected
+        // Automatic AI Router System Scan when Telnet connects
         viewModelScope.launch {
             connectionStatus.collect { status ->
                 if (status == ConnectionStatus.CONNECTED) {
                     startDiagnosticPolling()
                     refreshCellularMetrics()
                     refreshPdpContexts()
+                    // Auto-trigger full AI System Scan on connect as requested!
+                    aiScanner.runFullSystemScan()
                 } else {
                     stopDiagnosticPolling()
                 }
@@ -91,6 +110,18 @@ class MainViewModel : ViewModel() {
 
     fun disconnect() {
         sessionManager.disconnect()
+    }
+
+    fun triggerAiSystemScan() {
+        viewModelScope.launch {
+            aiScanner.runFullSystemScan()
+        }
+    }
+
+    fun triggerBufferbloatTest() {
+        viewModelScope.launch {
+            aiScanner.runBufferbloatTest()
+        }
     }
 
     fun executeTerminalCommand(cmd: String) {
@@ -142,7 +173,6 @@ class MainViewModel : ViewModel() {
             val execResult = sessionManager.executeCommand(commandToRun, dryRun = dryRun)
 
             if (execResult.isSuccess && !dryRun) {
-                // Verify by reading back value
                 val verifyResult = sessionManager.executeCommand(setting.verificationProcedure)
                 val readBackValue = verifyResult.output.trim()
                 if (readBackValue.contains(proposedVal)) {
@@ -166,6 +196,66 @@ class MainViewModel : ViewModel() {
                     )
                 }
             }
+        }
+    }
+
+    // Smart Optimization Pre-flight & Execution
+    fun requestOptimization(opt: SmartOptimization) {
+        if (!opt.isSupported) return
+        _preFlightOptimization.value = opt
+    }
+
+    fun cancelOptimizationDialog() {
+        _preFlightOptimization.value = null
+    }
+
+    fun confirmExecuteOptimization() {
+        val opt = _preFlightOptimization.value ?: return
+        _preFlightOptimization.value = null
+
+        viewModelScope.launch {
+            val execRes = sessionManager.executeCommand(opt.executeCommand)
+            val verifyRes = sessionManager.executeCommand(opt.verifyCommand)
+            val isSuccess = execRes.isSuccess && !verifyRes.output.contains("error", ignoreCase = true)
+
+            aiScanner.updateOptimizationStatus(
+                id = opt.id,
+                isApplied = isSuccess,
+                currentVal = verifyRes.output.trim().take(30),
+                logMsg = if (isSuccess) "Applied & Verified: ${verifyRes.output.trim()}" else "Execution failed: ${execRes.errorMessage}"
+            )
+
+            sessionManager.addAuditLog(
+                action = "SMART_OPTIMIZE",
+                target = opt.title,
+                oldValue = opt.currentValue,
+                newValue = opt.recommendedValue,
+                status = if (isSuccess) "APPLIED_VERIFIED" else "FAILED",
+                details = "Executed: ${opt.executeCommand} | Verify Output: ${verifyRes.output.trim()}"
+            )
+        }
+    }
+
+    fun rollbackOptimization(opt: SmartOptimization) {
+        viewModelScope.launch {
+            val execRes = sessionManager.executeCommand(opt.rollbackCommand)
+            val verifyRes = sessionManager.executeCommand(opt.verifyCommand)
+
+            aiScanner.updateOptimizationStatus(
+                id = opt.id,
+                isApplied = false,
+                currentVal = opt.originalBackupValue,
+                logMsg = "Restored to original backup: ${opt.originalBackupValue}"
+            )
+
+            sessionManager.addAuditLog(
+                action = "ROLLBACK_OPTIMIZE",
+                target = opt.title,
+                oldValue = opt.recommendedValue,
+                newValue = opt.originalBackupValue,
+                status = "RESTORED",
+                details = "Executed rollback: ${opt.rollbackCommand} | Verified: ${verifyRes.output.trim()}"
+            )
         }
     }
 
@@ -265,10 +355,19 @@ class MainViewModel : ViewModel() {
     fun exportSanitizedAuditLog(): String {
         val sb = StringBuilder()
         sb.append("=== UNISOC UDX710 ROUTER AUDIT & DIAGNOSTIC REPORT ===\n")
+        sb.append("Firmware: W22.32.3 | Kernel: Linux 4.14.98 | Platform: Spreadtrum UDX710\n")
         sb.append("Generated: ${java.util.Date()}\n")
         sb.append("Target IP: ${currentConfig.value.host}:${currentConfig.value.port} (Password: [REDACTED_FOR_SECURITY])\n\n")
 
-        sb.append("--- AUDIT LOG ---\n")
+        sb.append("--- AI SUBSYSTEM DIAGNOSTICS (${subsystemDiagnostics.value.size} Scanned) ---\n")
+        subsystemDiagnostics.value.forEach { sub ->
+            sb.append("[${sub.category}] ${sub.name}: ${sub.currentValue} (${sub.status})\n")
+            sb.append("   Kaam: ${sub.kaam}\n")
+            sb.append("   Limitations: ${sub.limitations}\n")
+            sb.append("   Possible Modifications: ${sub.possibleModifications}\n")
+        }
+
+        sb.append("\n--- AUDIT LOG ---\n")
         auditLog.value.forEach { entry ->
             sb.append("[${entry.formattedDate}] ${entry.actionType} | Target: ${entry.target} | Status: ${entry.status}\n")
             if (entry.oldValue != null) sb.append("   Old Value: ${entry.oldValue} -> New Value: ${entry.newValue}\n")

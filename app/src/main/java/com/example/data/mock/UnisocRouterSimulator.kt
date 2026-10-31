@@ -35,11 +35,11 @@ class UnisocRouterSimulator {
         if (random.nextInt(10) == 0) rxBusy += 1
 
         val output = when {
-            trimmed == "uname -a" -> {
-                "Linux unisoc-udx710 4.14.98 #1 SMP PREEMPT Wed Oct 28 14:22:10 CST 2020 armv7l GNU/Linux"
+            trimmed.contains("uname -a") -> {
+                "Linux unisoc-udx710 4.14.98 #1 SMP PREEMPT Wed Oct 28 14:22:10 CST 2020 armv7l GNU/Linux (Firmware W22.32.3)"
             }
-            trimmed == "cat /proc/version" -> {
-                "Linux version 4.14.98 (android-build@unisoc-build-server) (gcc version 7.3.0) #1 SMP PREEMPT 2020"
+            trimmed.contains("cat /proc/version") -> {
+                "Linux version 4.14.98 (android-build@unisoc-build-server) (gcc version 7.3.0) #1 SMP PREEMPT 2020 (Firmware: W22.32.3 / Spreadtrum UDX710)"
             }
             trimmed == "cat /proc/cpuinfo" -> {
                 """processor	: 0

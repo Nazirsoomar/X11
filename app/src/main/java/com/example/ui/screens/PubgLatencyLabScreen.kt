@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Stop
@@ -58,8 +59,8 @@ fun PubgLatencyLabScreen(viewModel: MainViewModel) {
     val summary by pubgLab.summary.collectAsState()
     val markers by pubgLab.markers.collectAsState()
     val samples by pubgLab.samples.collectAsState()
-    val sipaDeltas by viewModel.sipaDeltas.collectAsState()
     val cellular by viewModel.cellularMetrics.collectAsState()
+    val bufferbloat by viewModel.bufferbloatResult.collectAsState()
 
     Column(
         modifier = Modifier
@@ -74,12 +75,12 @@ fun PubgLatencyLabScreen(viewModel: MainViewModel) {
         ) {
             Column {
                 Text(
-                    text = "PUBG Latency & Jitter Lab",
+                    text = "PUBG Latency & Bufferbloat Lab",
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Root-cause diagnosis for ping spikes & jitter",
+                    text = "Root-cause ping spikes, jitter & bufferbloat analysis",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -93,7 +94,7 @@ fun PubgLatencyLabScreen(viewModel: MainViewModel) {
                 ) {
                     Icon(imageVector = Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Stop Probing", fontSize = 12.sp)
+                    Text("Stop", fontSize = 12.sp)
                 }
             } else {
                 Button(
@@ -103,14 +104,84 @@ fun PubgLatencyLabScreen(viewModel: MainViewModel) {
                 ) {
                     Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Start Lab Probe", fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimary)
+                    Text("Start Probe", fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimary)
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Manual Lag Spike Marker Button (Crucial requirement!)
+        // Bufferbloat & Network Stability Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(imageVector = Icons.Default.NetworkCheck, contentDescription = null, tint = ElectricCyan)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Bufferbloat & Stability Benchmark",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.5.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = { viewModel.triggerBufferbloatTest() },
+                        modifier = Modifier.testTag("run_bloat_test_btn")
+                    ) {
+                        Text("Test Bloat", fontSize = 11.sp)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    StatBox(title = "Idle Ping", value = "${String.format("%.1f", bufferbloat.idlePingMs)} ms")
+                    StatBox(title = "Loaded Ping", value = "${String.format("%.1f", bufferbloat.loadedPingMs)} ms")
+                    StatBox(
+                        title = "Bloat Delta",
+                        value = "+${String.format("%.1f", bufferbloat.bloatDeltaMs)} ms",
+                        color = if (bufferbloat.bloatDeltaMs > 25) DangerRed else SuccessGreen
+                    )
+                    StatBox(
+                        title = "Stability Score",
+                        value = "${bufferbloat.stabilityScore}/100",
+                        color = if (bufferbloat.stabilityScore >= 80) SuccessGreen else WarningAmber
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Grade: ${bufferbloat.grade}. Bufferbloat happens when packets queue up in router memory instead of transmitting immediately.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(8.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Manual Lag Spike Marker Button
         Button(
             onClick = {
                 pubgLab.markLagSpike(cellular.rsrpDbm ?: cellular.rssiDbm)
@@ -236,7 +307,7 @@ fun PubgLatencyLabScreen(viewModel: MainViewModel) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "No lag spikes captured yet. Press the orange 'PUBG LAG SPIKE OCCURRED' button when you feel a stutter in gameplay to isolate the cause.",
+                    text = "No lag spikes captured yet. Press the orange 'PUBG LAG SPIKE OCCURRED' button when you feel a stutter in gameplay to isolate whether the router, Wi-Fi, or cellular tower caused it.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(14.dp)
