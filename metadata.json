@@ -1,0 +1,6 @@
+{
+  "name": "UNISOC Tuner",
+  "description": "Professional diagnostic, inspection, SIPA monitoring, and safe tuning suite for UNISOC UDX710 4G/5G embedded Linux routers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
