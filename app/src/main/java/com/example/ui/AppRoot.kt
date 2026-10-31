@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.CellTower
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Router
@@ -43,16 +42,9 @@ import com.example.ui.components.CommandExplanationDialog
 import com.example.ui.components.PreFlightConfirmationDialog
 import com.example.ui.components.SmartOptimizationDialog
 import com.example.ui.screens.AiSystemScanScreen
-import com.example.ui.screens.AtCommandScreen
 import com.example.ui.screens.BackupHistoryScreen
-import com.example.ui.screens.CellularEngineeringScreen
-import com.example.ui.screens.CommandCenterScreen
 import com.example.ui.screens.ConnectionScreen
-import com.example.ui.screens.OverviewScreen
-import com.example.ui.screens.PdpContextScreen
 import com.example.ui.screens.PubgLatencyLabScreen
-import com.example.ui.screens.SettingsEditorScreen
-import com.example.ui.screens.SipaDiagnosticsScreen
 import com.example.ui.screens.SmartOptimizationsScreen
 import com.example.ui.screens.TerminalScreen
 import com.example.ui.theme.ElectricCyan
@@ -60,11 +52,9 @@ import com.example.ui.theme.ElectricCyan
 @Composable
 fun AppRoot(viewModel: MainViewModel = viewModel()) {
     var selectedNavIndex by remember { mutableIntStateOf(0) }
-    var cellularSubTab by remember { mutableIntStateOf(0) } // 0: SIPA, 1: Radio/Cell, 2: AT Cmd, 3: PDP/CID
-    var tuningSubTab by remember { mutableIntStateOf(0) }   // 0: Smart Optimizations, 1: Raw Settings Editor, 2: Command Library
-    var configSubTab by remember { mutableIntStateOf(0) }   // 0: Telnet Connection, 1: Audit Log & Backup
+    var terminalSubTab by remember { mutableIntStateOf(0) } // 0: Live Shell, 1: Telnet Config, 2: Audit & Rollback History
 
-    // Back button returns to Overview
+    // Back button returns to AI Optimizer (Home)
     BackHandler(enabled = selectedNavIndex != 0) {
         selectedNavIndex = 0
     }
@@ -108,58 +98,34 @@ fun AppRoot(viewModel: MainViewModel = viewModel()) {
                 NavigationBarItem(
                     selected = selectedNavIndex == 0,
                     onClick = { selectedNavIndex = 0 },
-                    icon = { Icon(Icons.Default.Router, contentDescription = "Overview") },
-                    label = { Text("Overview", fontSize = 9.5.sp) },
+                    icon = { Icon(Icons.Default.Tune, contentDescription = "AI Optimizer") },
+                    label = { Text("AI Optimizer", fontSize = 10.5.sp) },
                     colors = NavigationBarItemDefaults.colors(indicatorColor = ElectricCyan.copy(alpha = 0.2f)),
-                    modifier = Modifier.testTag("nav_overview")
+                    modifier = Modifier.testTag("nav_ai_optimizer")
                 )
                 NavigationBarItem(
                     selected = selectedNavIndex == 1,
                     onClick = { selectedNavIndex = 1 },
-                    icon = { Icon(Icons.Default.AutoAwesome, contentDescription = "AI Scan") },
-                    label = { Text("AI Scan", fontSize = 9.5.sp) },
+                    icon = { Icon(Icons.Default.AutoAwesome, contentDescription = "AI System Scan") },
+                    label = { Text("AI Scan", fontSize = 10.5.sp) },
                     colors = NavigationBarItemDefaults.colors(indicatorColor = ElectricCyan.copy(alpha = 0.2f)),
                     modifier = Modifier.testTag("nav_ai_scan")
                 )
                 NavigationBarItem(
                     selected = selectedNavIndex == 2,
                     onClick = { selectedNavIndex = 2 },
-                    icon = { Icon(Icons.Default.Tune, contentDescription = "Optimizations") },
-                    label = { Text("Tuning", fontSize = 9.5.sp) },
+                    icon = { Icon(Icons.Default.Bolt, contentDescription = "PUBG & Bloat Lab") },
+                    label = { Text("Gaming Lab", fontSize = 10.5.sp) },
                     colors = NavigationBarItemDefaults.colors(indicatorColor = ElectricCyan.copy(alpha = 0.2f)),
-                    modifier = Modifier.testTag("nav_optimizations")
+                    modifier = Modifier.testTag("nav_pubg_lab")
                 )
                 NavigationBarItem(
                     selected = selectedNavIndex == 3,
                     onClick = { selectedNavIndex = 3 },
-                    icon = { Icon(Icons.Default.Bolt, contentDescription = "PUBG Lab") },
-                    label = { Text("PUBG Lab", fontSize = 9.5.sp) },
-                    colors = NavigationBarItemDefaults.colors(indicatorColor = ElectricCyan.copy(alpha = 0.2f)),
-                    modifier = Modifier.testTag("nav_pubg")
-                )
-                NavigationBarItem(
-                    selected = selectedNavIndex == 4,
-                    onClick = { selectedNavIndex = 4 },
-                    icon = { Icon(Icons.Default.CellTower, contentDescription = "Cellular & SIPA") },
-                    label = { Text("Cellular", fontSize = 9.5.sp) },
-                    colors = NavigationBarItemDefaults.colors(indicatorColor = ElectricCyan.copy(alpha = 0.2f)),
-                    modifier = Modifier.testTag("nav_cellular")
-                )
-                NavigationBarItem(
-                    selected = selectedNavIndex == 5,
-                    onClick = { selectedNavIndex = 5 },
-                    icon = { Icon(Icons.Default.Terminal, contentDescription = "Terminal") },
-                    label = { Text("Terminal", fontSize = 9.5.sp) },
+                    icon = { Icon(Icons.Default.Terminal, contentDescription = "Terminal & Telnet") },
+                    label = { Text("Terminal", fontSize = 10.5.sp) },
                     colors = NavigationBarItemDefaults.colors(indicatorColor = ElectricCyan.copy(alpha = 0.2f)),
                     modifier = Modifier.testTag("nav_terminal")
-                )
-                NavigationBarItem(
-                    selected = selectedNavIndex == 6,
-                    onClick = { selectedNavIndex = 6 },
-                    icon = { Icon(Icons.Default.Security, contentDescription = "Config & Audit") },
-                    label = { Text("Config", fontSize = 9.5.sp) },
-                    colors = NavigationBarItemDefaults.colors(indicatorColor = ElectricCyan.copy(alpha = 0.2f)),
-                    modifier = Modifier.testTag("nav_config")
                 )
             }
         }
@@ -170,112 +136,37 @@ fun AppRoot(viewModel: MainViewModel = viewModel()) {
                 .padding(innerPadding)
         ) {
             when (selectedNavIndex) {
-                0 -> OverviewScreen(
-                    viewModel = viewModel,
-                    onNavigateToTab = { target ->
-                        when (target) {
-                            1 -> {
-                                selectedNavIndex = 6 // Config
-                                configSubTab = 0
-                            }
-                            2 -> selectedNavIndex = 5 // Terminal
-                            6 -> selectedNavIndex = 3 // PUBG Lab
-                        }
-                    }
-                )
+                0 -> SmartOptimizationsScreen(viewModel = viewModel)
                 1 -> AiSystemScanScreen(viewModel = viewModel)
-                2 -> {
+                2 -> PubgLatencyLabScreen(viewModel = viewModel)
+                3 -> {
                     Column(modifier = Modifier.fillMaxSize()) {
                         ScrollableTabRow(
-                            selectedTabIndex = tuningSubTab,
+                            selectedTabIndex = terminalSubTab,
                             containerColor = MaterialTheme.colorScheme.surface,
                             edgePadding = 12.dp
                         ) {
                             Tab(
-                                selected = tuningSubTab == 0,
-                                onClick = { tuningSubTab = 0 },
-                                text = { Text("Smart Optimizations", fontSize = 12.sp) }
+                                selected = terminalSubTab == 0,
+                                onClick = { terminalSubTab = 0 },
+                                text = { Text("BusyBox Shell (sh-4.4#)", fontSize = 12.sp) }
                             )
                             Tab(
-                                selected = tuningSubTab == 1,
-                                onClick = { tuningSubTab = 1 },
-                                text = { Text("Settings Editor", fontSize = 12.sp) }
+                                selected = terminalSubTab == 1,
+                                onClick = { terminalSubTab = 1 },
+                                text = { Text("Telnet Connection (192.168.0.1)", fontSize = 12.sp) }
                             )
                             Tab(
-                                selected = tuningSubTab == 2,
-                                onClick = { tuningSubTab = 2 },
-                                text = { Text("Command Library (A–Q)", fontSize = 12.sp) }
+                                selected = terminalSubTab == 2,
+                                onClick = { terminalSubTab = 2 },
+                                text = { Text("Audit & Rollback Logs", fontSize = 12.sp) }
                             )
                         }
 
-                        when (tuningSubTab) {
-                            0 -> SmartOptimizationsScreen(viewModel = viewModel)
-                            1 -> SettingsEditorScreen(viewModel = viewModel)
-                            2 -> CommandCenterScreen(viewModel = viewModel)
-                        }
-                    }
-                }
-                3 -> PubgLatencyLabScreen(viewModel = viewModel)
-                4 -> {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        ScrollableTabRow(
-                            selectedTabIndex = cellularSubTab,
-                            containerColor = MaterialTheme.colorScheme.surface,
-                            edgePadding = 12.dp
-                        ) {
-                            Tab(
-                                selected = cellularSubTab == 0,
-                                onClick = { cellularSubTab = 0 },
-                                text = { Text("SIPA Stats", fontSize = 12.sp) }
-                            )
-                            Tab(
-                                selected = cellularSubTab == 1,
-                                onClick = { cellularSubTab = 1 },
-                                text = { Text("Radio & Cell", fontSize = 12.sp) }
-                            )
-                            Tab(
-                                selected = cellularSubTab == 2,
-                                onClick = { cellularSubTab = 2 },
-                                text = { Text("AT Manager", fontSize = 12.sp) }
-                            )
-                            Tab(
-                                selected = cellularSubTab == 3,
-                                onClick = { cellularSubTab = 3 },
-                                text = { Text("PDP Contexts (CID)", fontSize = 12.sp) }
-                            )
-                        }
-
-                        when (cellularSubTab) {
-                            0 -> SipaDiagnosticsScreen(viewModel = viewModel)
-                            1 -> CellularEngineeringScreen(viewModel = viewModel)
-                            2 -> AtCommandScreen(viewModel = viewModel)
-                            3 -> PdpContextScreen(viewModel = viewModel)
-                        }
-                    }
-                }
-                5 -> TerminalScreen(viewModel = viewModel)
-                6 -> {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        ScrollableTabRow(
-                            selectedTabIndex = configSubTab,
-                            containerColor = MaterialTheme.colorScheme.surface,
-                            edgePadding = 12.dp
-                        ) {
-                            Tab(
-                                selected = configSubTab == 0,
-                                onClick = { configSubTab = 0 },
-                                text = { Text("Telnet Connection", fontSize = 12.sp) }
-                            )
-                            Tab(
-                                selected = configSubTab == 1,
-                                onClick = { configSubTab = 1 },
-                                text = { Text("Audit Trail & Backup", fontSize = 12.sp) }
-                            )
-                        }
-
-                        when (configSubTab) {
-                            0 -> ConnectionScreen(viewModel = viewModel)
-                            1 -> BackupHistoryScreen(viewModel = viewModel)
+                        when (terminalSubTab) {
+                            0 -> TerminalScreen(viewModel = viewModel)
+                            1 -> ConnectionScreen(viewModel = viewModel)
+                            2 -> BackupHistoryScreen(viewModel = viewModel)
                         }
                     }
                 }

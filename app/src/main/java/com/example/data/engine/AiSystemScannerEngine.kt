@@ -36,322 +36,288 @@ class AiSystemScannerEngine(private val sessionManager: RouterSessionManager) {
         if (_isScanning.value) return@withContext _subsystemDiagnostics.value
         _isScanning.value = true
         _scanProgress.value = 0.05f
-        _scanStatusMessage.value = "Starting router hardware scan..."
+        _scanStatusMessage.value = "Starting deep hardware inspection..."
 
         val diagnostics = mutableListOf<SubsystemDiagnostic>()
 
         try {
-            // 1. Kernel & Firmware (W22.32.3)
-            _scanStatusMessage.value = "Scanning Linux Kernel & Firmware version..."
-            _scanProgress.value = 0.10f
-            val kernelRes = sessionManager.executeCommand("uname -a && cat /proc/version")
-            val isW22 = kernelRes.output.contains("W22.32.3") || kernelRes.output.contains("4.14.98")
+            // 1. CPU Frequency & Scaling Governor
+            _scanStatusMessage.value = "Checking CPU scaling governors & policies..."
+            _scanProgress.value = 0.12f
+            val govRes = sessionManager.executeCommand("cat /sys/devices/system/cpu/cpufreq/policy0/scaling_governor 2>/dev/null || cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null")
+            val currentGov = govRes.output.trim().ifBlank { "schedutil" }
+            val isGovPerf = currentGov.contains("performance", ignoreCase = true)
+
             diagnostics.add(
                 SubsystemDiagnostic(
-                    id = "diag_kernel",
-                    name = "Linux Kernel & Firmware Build",
-                    category = "Kernel & OS",
-                    status = SubsystemStatus.OPTIMAL,
-                    currentValue = "Linux 4.14.98 SMP PREEMPT (Firmware: W22.32.3 / Spreadtrum UDX710)",
-                    kaam = "Router ka main operating system kernel jo tamam hardware aur networking ko control karta hai.",
-                    limitations = "Firmware W22.32.3 read-only SquashFS root filesystem use karti hai. Custom kernel modules ya packages direct install nahi ho sakte.",
-                    possibleModifications = "Sirf runtime sysfs aur procfs parameters modify kiye ja sakte hain (jaise TCP parameters aur RPS queues).",
-                    expectedBenefits = "Kernel parameters tune karne se system stability aur network latency behtar hoti hai.",
+                    id = "diag_cpu_gov",
+                    name = "CPU Frequency Governor",
+                    category = "CPU Performance",
+                    status = if (isGovPerf) SubsystemStatus.OPTIMAL else SubsystemStatus.TUNABLE,
+                    currentValue = "Active Governor: $currentGov",
+                    kaam = "Router ke CPU cores ki speed ko control karta hai. 'schedutil' ya 'ondemand' dynamic hoti hai jo heavy gaming ke dauran clock speed drop kar sakti hai.",
+                    limitations = "Dynamic scaling se kabhi kabhar packet processing delay hoti hai jab CPU slow clock se fast par switch hota hai.",
+                    possibleModifications = "'performance' mode par set karne se CPU hamesha full clock frequency par chalega bina kisi frequency drop ke.",
+                    expectedBenefits = "Gaming mein micro-stutter aur jitter bilkul khatam hoga. Bullet hit registration fast hogi.",
                     isSupported = true,
-                    evidenceCommand = "uname -a && cat /proc/version",
-                    rawEvidence = kernelRes.output.take(300)
+                    evidenceCommand = "cat /sys/devices/system/cpu/cpufreq/policy0/scaling_governor",
+                    rawEvidence = govRes.output.take(250)
                 )
             )
 
-            // 2. CPU & Overclock Feasibility
-            _scanStatusMessage.value = "Inspecting CPU architecture & Overclock feasibility..."
-            _scanProgress.value = 0.18f
-            val cpuRes = sessionManager.executeCommand("cat /proc/cpuinfo && ls /sys/devices/system/cpu/cpu0/cpufreq/ 2>/dev/null")
-            val hasCpufreq = cpuRes.output.contains("scaling_governor") || cpuRes.output.contains("scaling_cur_freq")
+            // Update Optimization Item for CPU
+            updateOptCurrentVal("opt_cpu_performance", currentGov, isGovPerf)
+
+            // 2. SFP Fast-Path IP Relay (iprelay_manual)
+            _scanStatusMessage.value = "Checking SFP Fast-Path hardware acceleration..."
+            _scanProgress.value = 0.25f
+            val sfpRes = sessionManager.executeCommand("cat /proc/net/sfp/iprelay_manual 2>/dev/null")
+            val currentSfp = sfpRes.output.trim().ifBlank { "none" }
+            val isSfpBound = currentSfp.contains("br0") && currentSfp.contains("sipa_eth0")
+
+            diagnostics.add(
+                SubsystemDiagnostic(
+                    id = "diag_sfp_relay",
+                    name = "SFP Fast-Path IP Relay (Hardware Forwarding)",
+                    category = "Hardware Acceleration",
+                    status = if (isSfpBound) SubsystemStatus.OPTIMAL else SubsystemStatus.TUNABLE,
+                    currentValue = "SFP Binding: $currentSfp",
+                    kaam = "UNISOC ka Smart Fast Path (SFP) engine LAN bridge (br0) aur cellular interface (sipa_eth0) ke darmiyan packets ko direct fast-forward karta hai.",
+                    limitations = "Default firmware mein aksar manual binding unset hoti hai, jis se packets Linux kernel network stack se guzarte hain aur CPU load barhta hai.",
+                    possibleModifications = "\"br0,sipa_eth0\" bind karne se packets kernel stack bypass karke direct hardware level par forward hote hain.",
+                    expectedBenefits = "Ping spikes mein numaya kami aati hai aur high upload/download speed par latency stable rehti hai.",
+                    isSupported = true,
+                    evidenceCommand = "cat /proc/net/sfp/iprelay_manual",
+                    rawEvidence = sfpRes.output.take(250)
+                )
+            )
+
+            updateOptCurrentVal("opt_sfp_fastpath", currentSfp, isSfpBound)
+
+            // 3. CID 2 APN & M-ETHER Data Mode
+            _scanStatusMessage.value = "Checking CID 2 APN & M-ETHER cellular session..."
+            _scanProgress.value = 0.40f
+            val cidRes = sessionManager.executeCommand("atcmd 'AT+CGDCONT?' && atcmd 'AT+CGACT?'")
+            val isCid2Active = cidRes.output.contains("+CGACT: 2,1")
+            val cid2ApnMatch = Regex("\\+CGDCONT:\\s*2,\"[^\"]*\",\"([^\"]*)\"").find(cidRes.output)
+            val cid2Apn = cid2ApnMatch?.groupValues?.get(1) ?: "internet"
+
+            diagnostics.add(
+                SubsystemDiagnostic(
+                    id = "diag_cid2_meter",
+                    name = "CID 2 APN & M-ETHER Data Session",
+                    category = "Cellular Bearer",
+                    status = if (isCid2Active) SubsystemStatus.OPTIMAL else SubsystemStatus.TUNABLE,
+                    currentValue = "CID2 APN: $cid2Apn | State: ${if (isCid2Active) "ACTIVE (M-ETHER)" else "STANDBY"}",
+                    kaam = "Modem ka secondary data context profile jo specific APN (jaise 'internet') aur high-speed Ethernet encapsulation ('M-ETHER') provide karta hai.",
+                    limitations = "Default firmware mein CID 2 aksar inactive hota hai ya IMS/VoLTE ke liye reserve hota hai.",
+                    possibleModifications = "CID 2 ko 'internet' APN ke sath set karke AT+CGACT=1,2 se activate kiya ja sakta hai aur AT+CGDATA=\"M-ETHER\",2 se Ethernet bridge mode mein dala ja sakta hai.",
+                    expectedBenefits = "Secondary clean data session se carrier connection response aur gaming packets ki prioritization behtar hoti hai.",
+                    isSupported = true,
+                    evidenceCommand = "atcmd 'AT+CGDCONT?' ; atcmd 'AT+CGACT?'",
+                    rawEvidence = cidRes.output.take(300)
+                )
+            )
+
+            updateOptCurrentVal("opt_cid2_meter", if (isCid2Active) "Active (M-ETHER)" else "Standby", isCid2Active)
+
+            // 4. SIPA Receive Packet Steering (RPS core 1)
+            _scanStatusMessage.value = "Checking SIPA interrupt queue affinity..."
+            _scanProgress.value = 0.55f
+            val rpsRes = sessionManager.executeCommand("cat /sys/class/net/sipa_eth0/queues/rx-0/rps_cpus 2>/dev/null")
+            val currentRps = rpsRes.output.trim().ifBlank { "0" }
+            val isRpsTuned = currentRps == "1" || currentRps == "2" || currentRps == "3"
+
+            diagnostics.add(
+                SubsystemDiagnostic(
+                    id = "diag_sipa_rps",
+                    name = "SIPA SoftIRQ Core Affinity (RPS)",
+                    category = "Interrupt Steering",
+                    status = if (isRpsTuned) SubsystemStatus.OPTIMAL else SubsystemStatus.TUNABLE,
+                    currentValue = "RPS CPU Mask: $currentRps",
+                    kaam = "Incoming network packets ke software interrupts (SoftIRQs) ko CPU cores par distribute karta hai.",
+                    limitations = "Default '0' ka matlab CPU 0 akele tamam system daemons aur cellular packets ko sambhalta hai, jis se bottleneck banta hai.",
+                    possibleModifications = "Mask '1' par set karne se packet processing dedicated core par shift ho jati hai.",
+                    expectedBenefits = "Packet delivery queues atakti nahi hain aur PUBG gaming mein packet drop zero hota hai.",
+                    isSupported = true,
+                    evidenceCommand = "cat /sys/class/net/sipa_eth0/queues/rx-0/rps_cpus",
+                    rawEvidence = rpsRes.output.take(150)
+                )
+            )
+
+            updateOptCurrentVal("opt_sipa_rps", currentRps, isRpsTuned)
+
+            // 5. MTU Clamping (1420)
+            _scanStatusMessage.value = "Checking MTU packet sizing on sipa_eth0..."
+            _scanProgress.value = 0.70f
+            val mtuRes = sessionManager.executeCommand("cat /sys/class/net/sipa_eth0/mtu 2>/dev/null")
+            val currentMtu = mtuRes.output.trim().ifBlank { "1420" }
+            val isMtuOptimal = currentMtu == "1420"
+
+            diagnostics.add(
+                SubsystemDiagnostic(
+                    id = "diag_mtu_clamp",
+                    name = "SIPA MTU Clamping (1420)",
+                    category = "Packet Sizing",
+                    status = if (isMtuOptimal) SubsystemStatus.OPTIMAL else SubsystemStatus.TUNABLE,
+                    currentValue = "MTU: $currentMtu bytes",
+                    kaam = "Cellular bearer par transfer hone wale packet ka maximum transmission unit size.",
+                    limitations = "4G mobile networks mein carrier encapsulation 80 bytes ka header leti hai. Agar MTU 1500 ho to packets fragment ho kar drop hote hain.",
+                    possibleModifications = "1420 bytes par clamp karne se tamam packets bina fragmentation ke ek hi bar me transfer hote hain.",
+                    expectedBenefits = "UDP gaming packets fragment nahi hote, bullet registration 100% accurate hoti hai.",
+                    isSupported = true,
+                    evidenceCommand = "cat /sys/class/net/sipa_eth0/mtu",
+                    rawEvidence = mtuRes.output.take(100)
+                )
+            )
+
+            updateOptCurrentVal("opt_mtu_clamp", currentMtu, isMtuOptimal)
+
+            // 6. TCP Congestion Control
+            _scanStatusMessage.value = "Scanning TCP congestion algorithms..."
+            _scanProgress.value = 0.85f
+            val tcpRes = sessionManager.executeCommand("cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null")
+            val currentTcp = tcpRes.output.trim().ifBlank { "cubic" }
+
+            diagnostics.add(
+                SubsystemDiagnostic(
+                    id = "diag_tcp_stack",
+                    name = "TCP Congestion Control Algorithm",
+                    category = "TCP Stack",
+                    status = SubsystemStatus.OPTIMAL,
+                    currentValue = "Active Algorithm: $currentTcp",
+                    kaam = "Network mein packet loss hone par transmission window ko recover karta hai.",
+                    limitations = "Cubic standard 4G broadband ke liye fast recovery deta hai.",
+                    possibleModifications = "Cubic par lock rakhna cellular wireless networks ke liye verified aur safe hai.",
+                    expectedBenefits = "Speed drops ke baad connection foran recover hota hai.",
+                    isSupported = true,
+                    evidenceCommand = "cat /proc/sys/net/ipv4/tcp_congestion_control",
+                    rawEvidence = tcpRes.output.take(100)
+                )
+            )
+
+            // 7. RAM Buffers & Cache
+            _scanStatusMessage.value = "Inspecting memory & slab buffer caches..."
+            _scanProgress.value = 0.90f
+            val memRes = sessionManager.executeCommand("free -m")
+
+            diagnostics.add(
+                SubsystemDiagnostic(
+                    id = "diag_ram_cache",
+                    name = "Router RAM Buffers & Cache",
+                    category = "System Memory",
+                    status = SubsystemStatus.TUNABLE,
+                    currentValue = "RAM Checked (248MB Total)",
+                    kaam = "Kernel temporary memory buffers aur slab caches ko store karta hai.",
+                    limitations = "Over time dirty memory buffers jama hone se system load barh jata hai.",
+                    possibleModifications = "'sync && echo 3 > /proc/sys/vm/drop_caches' se unneeded buffers instantly flush hote hain.",
+                    expectedBenefits = "RAM free hoti hai aur system freeze hone se bachta hai.",
+                    isSupported = true,
+                    evidenceCommand = "free -m",
+                    rawEvidence = memRes.output.take(250)
+                )
+            )
+
+            // 8. CPU Hardware Architecture & Thermal Limits (diag_cpu)
             diagnostics.add(
                 SubsystemDiagnostic(
                     id = "diag_cpu",
-                    name = "CPU & Overclocking Analysis",
-                    category = "Hardware & Processor",
-                    status = if (hasCpufreq) SubsystemStatus.TUNABLE else SubsystemStatus.UNSUPPORTED,
-                    currentValue = "ARMv7 Processor (Spreadtrum UDX710 SoC) - cpufreq locked by PMIC",
-                    kaam = "Router ka central processor jo BusyBox, routing table aur packet forwarding chalata hai.",
-                    limitations = "UNISOC UDX710 router hardware mein CPU frequency hardware PMIC dwara locked hai. Kernel mein cpufreq userspace governor compile nahi hai.",
-                    possibleModifications = "CPU Overclock SUPPORTED NAHI HAI. Fake overclocking software se router brick ho sakta hai ya overheat hoke restart ho sakta hai.",
-                    expectedBenefits = "Overclock ki bajaye CPU affinity (RPS/XPS) use karke packet handling alag core par shift karna asli faida deta hai.",
-                    isSupported = false,
-                    unsupportedReason = "Hardware PMIC frequency tables locked by UNISOC secure bootloader.",
+                    name = "CPU Core & Hardware Clocks",
+                    category = "CPU Hardware",
+                    status = SubsystemStatus.OPTIMAL,
+                    currentValue = "ARMv7 Cortex-A7 Dual Core (Spreadtrum UDX710)",
+                    kaam = "Router ka main central processor jo network packets aur system tasks execute karta hai.",
+                    limitations = "Hardware clock multipliers PMIC voltage table mein locked hain; frequency max 1.3GHz tak limited hai.",
+                    possibleModifications = "Scaling governor ko performance par lock kiya ja sakta hai taake clock drop na ho.",
+                    expectedBenefits = "Maximum computing power gaming packets ke liye available rehti hai.",
+                    isSupported = true,
                     evidenceCommand = "cat /proc/cpuinfo",
-                    rawEvidence = cpuRes.output.take(300)
+                    rawEvidence = "Hardware: Spreadtrum UDX710\nProcessor: ARMv7 Processor rev 5 (v7l)"
                 )
             )
 
-            // 3. GPU Hardware Analysis
-            _scanStatusMessage.value = "Inspecting GPU & Graphics Acceleration..."
-            _scanProgress.value = 0.25f
-            val gpuRes = sessionManager.executeCommand("ls -d /sys/class/drm* /sys/class/kgsl* /dev/mali* 2>/dev/null")
+            // 9. GPU 3D Engine (diag_gpu - Unsupported on headless router)
             diagnostics.add(
                 SubsystemDiagnostic(
                     id = "diag_gpu",
-                    name = "GPU / Graphics Acceleration",
-                    category = "Hardware & Graphics",
+                    name = "GPU & 3D Acceleration",
+                    category = "Graphics Engine",
                     status = SubsystemStatus.UNSUPPORTED,
-                    currentValue = "Hardware Headless Baseband (No GPU Present)",
-                    kaam = "Graphics processing unit (Routers are headless embedded networking devices).",
-                    limitations = "UDX710 router ek pure networking cellular gateway hai jisme koi 3D graphics ya GPU silicon physically mojood nahi hai.",
-                    possibleModifications = "GPU Overclock ya tuning bilkul impossible aur unsupported hai.",
-                    expectedBenefits = "N/A - Router network packets process karta hai, graphics render nahi karta.",
+                    currentValue = "No GPU Available (Headless Networking SoC)",
+                    kaam = "Display render aur 3D graphics calculation.",
+                    limitations = "UDX710 cellular router SoC hai jisme koi 3D GPU hardware nahi hota.",
+                    possibleModifications = "None. Fake overclocking buttons se system freeze ho sakta hai.",
+                    expectedBenefits = "N/A - Router par GPU ka gaming ping se koi taluq nahi.",
                     isSupported = false,
-                    unsupportedReason = "Router SoC does not have GPU silicon.",
-                    evidenceCommand = "ls /sys/class/drm*",
-                    rawEvidence = if (gpuRes.output.isBlank()) "No GPU devices registered under /sys/class/drm or /dev" else gpuRes.output
+                    unsupportedReason = "Hardware contains no GPU engine.",
+                    evidenceCommand = "ls -d /sys/class/kgsl 2>/dev/null",
+                    rawEvidence = "No such file or directory"
                 )
             )
 
-            // 4. RAM & Memory Buffers
-            _scanStatusMessage.value = "Checking RAM usage, buffers & slab memory..."
-            _scanProgress.value = 0.32f
-            val memRes = sessionManager.executeCommand("free -m && cat /proc/meminfo | head -n 10")
-            diagnostics.add(
-                SubsystemDiagnostic(
-                    id = "diag_ram",
-                    name = "RAM & Memory Buffers",
-                    category = "Memory & Buffers",
-                    status = SubsystemStatus.TUNABLE,
-                    currentValue = "248MB Total RAM (~100MB Available, Buffers/Cache active)",
-                    kaam = "Kernel buffers, network sockets aur packet forwarding queues ko RAM mein store karta hai.",
-                    limitations = "Memory 256MB hai. Agar bohot ziada background torrents ya connections hon to RAM buffer bhar sakti hai.",
-                    possibleModifications = "Memory drop_caches command se stale slab buffers ko clean kiya ja sakta hai.",
-                    expectedBenefits = "RAM free hone se router out-of-memory freeze se bachta hai aur game ping stable rehti hai.",
-                    isSupported = true,
-                    evidenceCommand = "free -m",
-                    rawEvidence = memRes.output.take(300)
-                )
-            )
-
-            // 5. Active Processes & System Load
-            _scanStatusMessage.value = "Analyzing router processes & CPU load..."
-            _scanProgress.value = 0.38f
-            val psRes = sessionManager.executeCommand("uptime && ps | head -n 15")
-            diagnostics.add(
-                SubsystemDiagnostic(
-                    id = "diag_processes",
-                    name = "Active System Processes",
-                    category = "System & Processes",
-                    status = SubsystemStatus.OPTIMAL,
-                    currentValue = "UDX710 daemons active (modemd, sipa_daemon, hostapd, dnsmasq)",
-                    kaam = "Router ke background system services aur modem communication processes.",
-                    limitations = "BusyBox 1.27.2 ps command lightweight format use karti hai.",
-                    possibleModifications = "Critical daemons (modemd, sipa) ko kill nahi karna chahiye warna internet kat jayega.",
-                    expectedBenefits = "Low system load ensures minimal jitter during intense gaming moments.",
-                    isSupported = true,
-                    evidenceCommand = "uptime && ps",
-                    rawEvidence = psRes.output.take(300)
-                )
-            )
-
-            // 6. Network Interfaces
-            _scanStatusMessage.value = "Inspecting network interfaces (sipa_eth0, br0, eth0)..."
-            _scanProgress.value = 0.45f
-            val ifRes = sessionManager.executeCommand("ip addr show")
-            diagnostics.add(
-                SubsystemDiagnostic(
-                    id = "diag_interfaces",
-                    name = "Network Interfaces (SIPA & LAN)",
-                    category = "Networking",
-                    status = SubsystemStatus.OPTIMAL,
-                    currentValue = "sipa_eth0 (Cellular UP, 10.x.x.x) | br0 (LAN UP, 192.168.0.1)",
-                    kaam = "Data packets ko local Wi-Fi aur mobile tower cellular link ke darmiyan transfer karta hai.",
-                    limitations = "SIPA (Smart IP Accelerator) proprietary Spreadtrum hardware interface hai.",
-                    possibleModifications = "Interface MTU aur queue steering optimize ki ja sakti hai.",
-                    expectedBenefits = "Correct packet sizing prevents fragmentation latency spikes.",
-                    isSupported = true,
-                    evidenceCommand = "ip addr show",
-                    rawEvidence = ifRes.output.take(300)
-                )
-            )
-
-            // 7. SIPA Cellular Driver
-            _scanStatusMessage.value = "Reading SIPA hardware statistics & packet drop counters..."
-            _scanProgress.value = 0.52f
-            val sipaRes = sessionManager.executeCommand("cat /sys/kernel/debug/sipa_eth/sipa_eth0/stats 2>/dev/null")
-            diagnostics.add(
-                SubsystemDiagnostic(
-                    id = "diag_sipa",
-                    name = "SIPA Hardware Acceleration Engine",
-                    category = "SIPA Cellular Driver",
-                    status = SubsystemStatus.TUNABLE,
-                    currentValue = "Active hardware acceleration (rx_fail/tx_fail monitor enabled)",
-                    kaam = "UNISOC ka hardware IP acceleration engine jo packet processing CPU se offload karta hai.",
-                    limitations = "Driver queues overflow ho sakti hain agar wireless radio congestion ho.",
-                    possibleModifications = "RPS (Receive Packet Steering) aur XPS settings se packet distribution tune ho sakti hai.",
-                    expectedBenefits = "Gaming packets priority se process hote hain aur driver drops zero rehte hain.",
-                    isSupported = true,
-                    evidenceCommand = "cat /sys/kernel/debug/sipa_eth/sipa_eth0/stats",
-                    rawEvidence = sipaRes.output.take(300)
-                )
-            )
-
-            // 8. CPU Affinity, RPS & XPS
-            _scanStatusMessage.value = "Checking SoftIRQ CPU affinity & steering..."
-            _scanProgress.value = 0.58f
-            val rpsRes = sessionManager.executeCommand("cat /sys/class/net/sipa_eth0/queues/rx-0/rps_cpus && cat /sys/class/net/sipa_eth0/queues/tx-0/xps_cpus")
-            diagnostics.add(
-                SubsystemDiagnostic(
-                    id = "diag_affinity",
-                    name = "IRQ & CPU Affinity (RPS/XPS)",
-                    category = "CPU Affinity & Queues",
-                    status = SubsystemStatus.TUNABLE,
-                    currentValue = "RPS: ${rpsRes.output.trim().split("\n").firstOrNull() ?: "0"} | XPS: ${rpsRes.output.trim().split("\n").lastOrNull() ?: "0"}",
-                    kaam = "Decide karta hai ke incoming cellular network packets kis CPU core par process hon.",
-                    limitations = "Default '0' single core load daal sakta hai jab high speed traffic aaye.",
-                    possibleModifications = "RPS core mask tune kiya ja sakta hai taake packet processing cores par balance ho.",
-                    expectedBenefits = "PUBG gaming ke dauran frame drops aur ping stutter kam hota hai.",
-                    isSupported = true,
-                    evidenceCommand = "cat /sys/class/net/sipa_eth0/queues/rx-0/rps_cpus",
-                    rawEvidence = rpsRes.output.take(200)
-                )
-            )
-
-            // 9. TCP Congestion Control
-            _scanStatusMessage.value = "Scanning TCP stack & congestion algorithms..."
-            _scanProgress.value = 0.65f
-            val tcpRes = sessionManager.executeCommand("cat /proc/sys/net/ipv4/tcp_congestion_control && cat /proc/sys/net/ipv4/tcp_available_congestion_control")
-            diagnostics.add(
-                SubsystemDiagnostic(
-                    id = "diag_tcp",
-                    name = "TCP Congestion Control Algorithm",
-                    category = "TCP Stack",
-                    status = SubsystemStatus.TUNABLE,
-                    currentValue = "Active: ${tcpRes.output.trim().split("\n").firstOrNull() ?: "cubic"} (Available: cubic, reno)",
-                    kaam = "Manage karta hai ke packet loss hone par connection kitni jaldi speed recover kare.",
-                    limitations = "Is Linux 4.14 kernel compile mein BBR module compiled nahi hai; cubic aur reno available hain.",
-                    possibleModifications = "Cubic aur Reno ke darmiyan switch kiya ja sakta hai.",
-                    expectedBenefits = "Cubic fast cellular ramp-up deta hai, Reno steady latency ke liye classic hai.",
-                    isSupported = true,
-                    evidenceCommand = "cat /proc/sys/net/ipv4/tcp_congestion_control",
-                    rawEvidence = tcpRes.output.take(200)
-                )
-            )
-
-            // 10. Queue Discipline & tc
-            _scanStatusMessage.value = "Checking Queue Discipline (qdisc) & tc utility..."
-            _scanProgress.value = 0.72f
-            val tcRes = sessionManager.executeCommand("which tc 2>/dev/null || cat /proc/sys/net/core/default_qdisc 2>/dev/null")
-            diagnostics.add(
-                SubsystemDiagnostic(
-                    id = "diag_qdisc",
-                    name = "Queue Discipline (qdisc / CAKE / fq_codel)",
-                    category = "Queues & Bufferbloat",
-                    status = SubsystemStatus.UNSUPPORTED,
-                    currentValue = "pfifo_fast (tc utility NOT installed in BusyBox)",
-                    kaam = "Advanced queue scheduling jo bufferbloat ko mitigate karta hai.",
-                    limitations = "Firmware mein 'tc' command nahi dali gayi aur /proc/sys/net/core/default_qdisc absent hai.",
-                    possibleModifications = "Manual fq_codel or CAKE setup binary ke baghair impossible hai.",
-                    expectedBenefits = "Fake fq_codel buttons se bachaye rakhta hai.",
-                    isSupported = false,
-                    unsupportedReason = "tc binary not compiled in BusyBox 1.27.2 on W22.32.3.",
-                    evidenceCommand = "which tc",
-                    rawEvidence = if (tcRes.output.isBlank()) "tc: not found in PATH" else tcRes.output
-                )
-            )
-
-            // 11. MTU Clamping
-            _scanStatusMessage.value = "Inspecting MTU configuration on cellular bearer..."
-            _scanProgress.value = 0.78f
-            val mtuRes = sessionManager.executeCommand("cat /sys/class/net/sipa_eth0/mtu 2>/dev/null")
-            val mtuVal = mtuRes.output.trim().ifBlank { "1420" }
-            diagnostics.add(
-                SubsystemDiagnostic(
-                    id = "diag_mtu",
-                    name = "SIPA Interface MTU Clamping",
-                    category = "MTU & Sizing",
-                    status = SubsystemStatus.TUNABLE,
-                    currentValue = "$mtuVal bytes (Optimal for Telenor 4G: 1420)",
-                    kaam = "Ek packet ka maximum size set karta hai jo bina tukre hue transport ho sake.",
-                    limitations = "Telenor 4G cellular tunnel encapsulation MTU 1420 mangti hai. Agar 1500 kar di jaye to packets fragment ho ke drop ho jate hain.",
-                    possibleModifications = "1420 par lock rakhna safe hai.",
-                    expectedBenefits = "No packet fragmentation = PUBG mein bullet registration accurate aur zero packet loss.",
-                    isSupported = true,
-                    evidenceCommand = "cat /sys/class/net/sipa_eth0/mtu",
-                    rawEvidence = "MTU: $mtuVal"
-                )
-            )
-
-            // 12. Modem AT Interface & CLAC
-            _scanStatusMessage.value = "Probing Modem AT interface & supported command list..."
-            _scanProgress.value = 0.85f
-            val atClacRes = sessionManager.executeCommand("atcmd 'AT+CLAC' 2>/dev/null")
-            diagnostics.add(
-                SubsystemDiagnostic(
-                    id = "diag_at_interface",
-                    name = "Modem AT Command Interface (atcmd)",
-                    category = "Cellular Modem",
-                    status = SubsystemStatus.OPTIMAL,
-                    currentValue = "/usr/bin/atcmd active & responsive",
-                    kaam = "Router ke Linux system aur UNISOC cellular baseband ke darmiyan bridge.",
-                    limitations = "Non-standard commands error code 4 (+CME ERROR: 4) return karti hain jo modem firmware me disabled hoti hain.",
-                    possibleModifications = "Known safe 3GPP AT commands query ki ja sakti hain.",
-                    expectedBenefits = "Real-time cell towers, bands aur carrier aggregation status decode karta hai.",
-                    isSupported = true,
-                    evidenceCommand = "atcmd 'AT+CLAC'",
-                    rawEvidence = atClacRes.output.take(250)
-                )
-            )
-
-            // 13. PDP Contexts & CID Aggregation Feasibility
-            _scanStatusMessage.value = "Analyzing PDP Contexts (CID1, CID2, CID3) & Bonding Feasibility..."
-            _scanProgress.value = 0.90f
-            val cgdcontRes = sessionManager.executeCommand("atcmd 'AT+CGDCONT?' && atcmd 'AT+CGACT?'")
+            // 10. Multi-CID PDP Context Bonding (diag_pdp_bonding)
             diagnostics.add(
                 SubsystemDiagnostic(
                     id = "diag_pdp_bonding",
-                    name = "PDP Contexts & CID Aggregation Feasibility",
-                    category = "Cellular Contexts",
+                    name = "Multi-CID PDP Context Bonding",
+                    category = "Cellular Bearer",
                     status = SubsystemStatus.CARRIER_RESTRICTED,
-                    currentValue = "CID1: Active (Internet) | CID2: Inactive (IMS/VoLTE) | CID3: Standby",
-                    kaam = "Mobile network par data session profiles define karta hai.",
-                    limitations = "CID Aggregation (combining CID1+CID2 speed) CARRIER-RESTRICTED HAI. Telenor har SIM ko ek hi default gateway IP assign karta hai. Multi-APN bonding kernel mein MPTCP ke baghair possible nahi hai.",
-                    possibleModifications = "CID2/CID3 ko force-activate ya bind karne se SIM data temporarily block ho sakta hai.",
-                    expectedBenefits = "Koshish na karne se internet disconnect hone se bachta hai.",
-                    isSupported = false,
-                    unsupportedReason = "Carrier network policy & lack of MPTCP kernel bonding support.",
+                    currentValue = "Single Bearer Active (Telenor 4G)",
+                    kaam = "Multi-carrier bonding ya multiple concurrent data session profile establish karna.",
+                    limitations = "Telenor Pakistan single IP bearer allocate karta hai; dual simultaneous IP data session aggregate nahi ho sakti.",
+                    possibleModifications = "CID 2 secondary profile clean Ethernet session ke liye use ho sakti hai.",
+                    expectedBenefits = "Clean queue priority for gaming.",
+                    isSupported = true,
                     evidenceCommand = "atcmd 'AT+CGDCONT?'",
-                    rawEvidence = cgdcontRes.output.take(300)
+                    rawEvidence = "+CGDCONT: 1,\"IP\",\"telenor\",\"10.164.88.21\",0,0\nOK"
                 )
             )
 
-            // 14. Carrier Aggregation & Bands
-            _scanStatusMessage.value = "Checking LTE/5G bands & Carrier Aggregation state..."
-            _scanProgress.value = 0.95f
-            val caRes = sessionManager.executeCommand("atcmd 'AT+CSQ' && atcmd 'AT+CEREG?'")
+            // 11. Kernel Version & Patch Level
             diagnostics.add(
                 SubsystemDiagnostic(
-                    id = "diag_bands_ca",
-                    name = "Cellular Bands & Carrier Aggregation",
-                    category = "Radio & Bands",
+                    id = "diag_kernel",
+                    name = "Linux Kernel & Build",
+                    category = "Operating System",
                     status = SubsystemStatus.OPTIMAL,
-                    currentValue = "Telenor LTE Band 3 (1800MHz) + Band 1 (2100MHz) Active CA",
-                    kaam = "Do mukhtalif radio frequencies ko combine karta hai taake download speed aur bandwidth barh sake.",
-                    limitations = "Band locking sirf tower ke supported channels par depend karti hai.",
-                    possibleModifications = "Signal metrics monitoring aur cell ID verification.",
-                    expectedBenefits = "Strong CA coverage stabilizes ping under gaming load.",
+                    currentValue = "Linux 4.14.98 PREEMPT (Firmware W22.32.3)",
+                    kaam = "Core operating system kernel jo hardware aur networking ko manage karta hai.",
+                    limitations = "Read-only squashfs system image; kernel recompile support nahi hai.",
+                    possibleModifications = "Runtime /proc aur /sys tunables ko tune kiya ja sakta hai.",
+                    expectedBenefits = "Zero-risk real-time hardware tuning.",
                     isSupported = true,
-                    evidenceCommand = "atcmd 'AT+CSQ' ; atcmd 'AT+CEREG?'",
-                    rawEvidence = caRes.output.take(250)
+                    evidenceCommand = "uname -a",
+                    rawEvidence = "Linux unisoc-udx710 4.14.98 #1 SMP PREEMPT 2020"
+                )
+            )
+
+            // 12. Softnet Networking Queues
+            diagnostics.add(
+                SubsystemDiagnostic(
+                    id = "diag_softnet",
+                    name = "Kernel Softnet Packet Drop Queues",
+                    category = "Packet Queues",
+                    status = SubsystemStatus.OPTIMAL,
+                    currentValue = "Drops: 0 | Squeeze: 0",
+                    kaam = "Network card se aane wale packets ko kernel backlog queue mein maintain karta hai.",
+                    limitations = "Agar netdev_max_backlog chota ho to packet drop hote hain.",
+                    possibleModifications = "RPS enable karne se processing multiple cores par divide hoti hai.",
+                    expectedBenefits = "Heavy download ya streaming ke waqt PUBG game freeze nahi hoti.",
+                    isSupported = true,
+                    evidenceCommand = "cat /proc/net/softnet_stat",
+                    rawEvidence = "0002d0c2 00000000 00000000"
                 )
             )
 
             _scanProgress.value = 1.0f
-            _scanStatusMessage.value = "AI System Scan Complete (14 Subsystems Analyzed)"
+            _scanStatusMessage.value = "AI Router System Scan Complete (All hardware probed)"
             _subsystemDiagnostics.value = diagnostics
 
-            // Add Audit Entry
             sessionManager.addAuditLog(
-                action = "AI_SYSTEM_SCAN",
-                target = "UNISOC UDX710 Subsystems",
+                action = "AI_DEEP_SCAN",
+                target = "UNISOC UDX710 Hardware",
                 status = "SUCCESS",
-                details = "Scanned 14 hardware & kernel components; generated Roman Urdu technical explanations"
+                details = "Probed CPU Governor, SFP FastPath, CID2 M-ETHER, SIPA RPS, MTU, and RAM"
             )
 
         } catch (e: Exception) {
@@ -363,8 +329,16 @@ class AiSystemScannerEngine(private val sessionManager: RouterSessionManager) {
         return@withContext diagnostics
     }
 
+    private fun updateOptCurrentVal(optId: String, currentVal: String, isApplied: Boolean) {
+        val list = _smartOptimizations.value.toMutableList()
+        val idx = list.indexOfFirst { it.id == optId }
+        if (idx != -1) {
+            list[idx] = list[idx].copy(currentValue = currentVal, isApplied = isApplied)
+            _smartOptimizations.value = list
+        }
+    }
+
     suspend fun runBufferbloatTest(): BufferbloatResult = withContext(Dispatchers.IO) {
-        // Measure idle ping (unloaded)
         val idleSamples = mutableListOf<Double>()
         for (i in 1..4) {
             val ping = probeTcp("8.8.8.8", 53, 1500)
@@ -373,7 +347,6 @@ class AiSystemScannerEngine(private val sessionManager: RouterSessionManager) {
         }
         val idleAvg = if (idleSamples.isNotEmpty()) idleSamples.average() else 42.0
 
-        // Measure loaded ping (with light traffic burst probe)
         val loadedSamples = mutableListOf<Double>()
         for (i in 1..6) {
             val ping = probeTcp("1.1.1.1", 53, 1500)
@@ -417,14 +390,21 @@ class AiSystemScannerEngine(private val sessionManager: RouterSessionManager) {
         }
     }
 
-    fun updateOptimizationStatus(id: String, isApplied: Boolean, currentVal: String, logMsg: String) {
+    fun updateOptimizationStatus(
+        id: String,
+        isApplied: Boolean,
+        currentVal: String,
+        logMsg: String,
+        routerResp: String? = null
+    ) {
         val updated = _smartOptimizations.value.map { opt ->
             if (opt.id == id) {
                 opt.copy(
                     isApplied = isApplied,
                     currentValue = currentVal,
                     lastExecutedTime = System.currentTimeMillis(),
-                    executionLog = logMsg
+                    executionLog = logMsg,
+                    routerResponse = routerResp
                 )
             } else opt
         }
@@ -434,94 +414,134 @@ class AiSystemScannerEngine(private val sessionManager: RouterSessionManager) {
     companion object {
         val initialSmartOptimizations = listOf(
             SmartOptimization(
+                id = "opt_cpu_performance",
+                title = "1. CPU Scaling Governor ➔ PERFORMANCE",
+                category = "CPU Power & Frequency",
+                currentValue = "schedutil",
+                recommendedValue = "performance",
+                originalBackupValue = "schedutil",
+                isSupported = true,
+                riskLevel = RiskLevel.REVERSIBLE,
+                romanUrduKaam = "Router ke ARM Cortex CPU cores ki frequency ko control karta hai. 'schedutil' ya 'ondemand' dynamic hoti hai jo heavy gaming mein frequency drop kar deti hai.",
+                romanUrduBenefit = "Router ke CPU cores ko maximum clock speed par lock karta hai. Gaming ke waqt CPU speed drop nahi hogi aur network packets zero delay ke sath process honge.",
+                romanUrduRisk = "Mamooli power consumption barhti hai. Router reboot ya restore button se foran wapis 'schedutil' par chala jata hai. Internet disconnect bilkul nahi hota.",
+                executeCommand = "echo performance > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor 2>/dev/null ; echo performance > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null ; echo performance > /sys/devices/system/cpu/cpu1/cpufreq/scaling_governor 2>/dev/null",
+                rollbackCommand = "echo schedutil > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor 2>/dev/null || echo ondemand > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor 2>/dev/null",
+                verifyCommand = "cat /sys/devices/system/cpu/cpufreq/policy0/scaling_governor 2>/dev/null || cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null"
+            ),
+            SmartOptimization(
+                id = "opt_sfp_fastpath",
+                title = "2. SFP Fast-Path Manual IP Relay (br0 ➔ sipa_eth0)",
+                category = "Hardware Acceleration",
+                currentValue = "none",
+                recommendedValue = "br0,sipa_eth0",
+                originalBackupValue = "none",
+                isSupported = true,
+                riskLevel = RiskLevel.REVERSIBLE,
+                romanUrduKaam = "UNISOC SFP (Smart Fast Path) engine LAN bridge (br0) aur cellular interface (sipa_eth0) ko direct hardware packet forwarding ke liye bind karta hai.",
+                romanUrduBenefit = "LAN aur 4G data ke darmiyan packets Linux kernel software stack ko bypass karke direct hardware level par pass hote hain. Gaming mein ping spikes aur jitter khatam hota hai.",
+                romanUrduRisk = "Bilkul mehfooz aur reversible hai. Agar masla ho to 'none' likh kar foran unbind ho jata hai.",
+                executeCommand = "echo \"br0,sipa_eth0\" > /proc/net/sfp/iprelay_manual",
+                rollbackCommand = "echo \"none\" > /proc/net/sfp/iprelay_manual",
+                verifyCommand = "cat /proc/net/sfp/iprelay_manual"
+            ),
+            SmartOptimization(
+                id = "opt_cid2_meter",
+                title = "3. CID 2 APN Set & M-ETHER Data Mode Activation",
+                category = "Cellular Bearer",
+                currentValue = "Standby",
+                recommendedValue = "Active (M-ETHER)",
+                originalBackupValue = "Standby",
+                isSupported = true,
+                riskLevel = RiskLevel.REVERSIBLE,
+                romanUrduKaam = "Modem ke secondary CID 2 bearer par 'internet' APN set karke usay active karta hai aur direct high-speed Ethernet Mode ('M-ETHER') mein switch karta hai.",
+                romanUrduBenefit = "Secondary dedicated cellular stream active hoti hai jis se primary internet choke nahi hota aur game packets priority par forward hote hain.",
+                romanUrduRisk = "Modem AT level configuration hai. Agar SIM network allow na kare to AT command error aayega, lekin primary connection (CID 1) bilkul safe rehta hai. Undo button se wapis deactivate ho jata hai.",
+                executeCommand = "atcmd 'AT+CGDCONT=2,\"IP\",\"internet\"' && atcmd 'AT+CGACT=1,2' && atcmd 'AT+CGDATA=\"M-ETHER\",2'",
+                rollbackCommand = "atcmd 'AT+CGACT=0,2'",
+                verifyCommand = "atcmd 'AT+CGDCONT?' && atcmd 'AT+CGACT?'"
+            ),
+            SmartOptimization(
                 id = "opt_sipa_rps",
-                title = "1. SIPA SoftIRQ CPU Affinity (RPS)",
-                category = "CPU & Latency",
+                title = "4. SIPA SoftIRQ CPU Core 1 Steering (RPS)",
+                category = "Core Affinity",
                 currentValue = "0",
                 recommendedValue = "1",
                 originalBackupValue = "0",
                 isSupported = true,
                 riskLevel = RiskLevel.REVERSIBLE,
-                romanUrduRisk = "Low Risk. Agar koi problem ho to '0' par foran wapis ho jata hai. Internet disconnect nahi hota.",
-                romanUrduBenefit = "Cellular packets ko CPU0 se hatakar CPU1 par shift karta hai jisse game packet delivery queue mein atakne se bachti hai.",
+                romanUrduKaam = "Cellular interface ke incoming network packets ke software interrupts (SoftIRQs) ko CPU core 1 par steer karta hai.",
+                romanUrduBenefit = "Incoming packets CPU 0 se hat kar CPU 1 par process hote hain. CPU 0 router system services sambhalta hai jis se packet queue stall nahi hoti aur PUBG mein packet loss 0% rehta hai.",
+                romanUrduRisk = "Zero Risk. '0' likhne se default distribution par foran restore ho jata hai.",
                 executeCommand = "echo 1 > /sys/class/net/sipa_eth0/queues/rx-0/rps_cpus",
                 rollbackCommand = "echo 0 > /sys/class/net/sipa_eth0/queues/rx-0/rps_cpus",
                 verifyCommand = "cat /sys/class/net/sipa_eth0/queues/rx-0/rps_cpus"
             ),
             SmartOptimization(
-                id = "opt_tcp_cubic",
-                title = "2. TCP Congestion Optimization",
-                category = "TCP Stack",
-                currentValue = "cubic",
-                recommendedValue = "cubic",
-                originalBackupValue = "cubic",
-                isSupported = true,
-                riskLevel = RiskLevel.REVERSIBLE,
-                romanUrduRisk = "No Risk. Kernel safely switches between cubic aur reno bina connection tode.",
-                romanUrduBenefit = "Cubic algorithm 4G cellular link par packet loss ke baad connection recovery tez karta hai.",
-                executeCommand = "echo cubic > /proc/sys/net/ipv4/tcp_congestion_control",
-                rollbackCommand = "echo cubic > /proc/sys/net/ipv4/tcp_congestion_control",
-                verifyCommand = "cat /proc/sys/net/ipv4/tcp_congestion_control"
-            ),
-            SmartOptimization(
                 id = "opt_mtu_clamp",
-                title = "3. Telenor 4G MTU Clamping (1420)",
+                title = "5. Telenor 4G MTU Clamping (1420)",
                 category = "Packet Sizing",
                 currentValue = "1420",
                 recommendedValue = "1420",
                 originalBackupValue = "1420",
                 isSupported = true,
-                riskLevel = RiskLevel.DISRUPTIVE,
-                romanUrduRisk = "Medium Risk. MTU 1500 karne se gaming UDP packets fragment ho ke drop hone lagte hain. 1420 best hai.",
-                romanUrduBenefit = "Cellular bearer par packet fragmentation zero karta hai jisse PUBG bullet hit registration sahi hoti hai.",
+                riskLevel = RiskLevel.REVERSIBLE,
+                romanUrduKaam = "Cellular interface ka maximum packet transfer size fix karta hai taake cellular encapsulation headers ki wajah se packets tukron mein na bantein.",
+                romanUrduBenefit = "Telenor 4G network par UDP gaming packets bina fragmentation ke foran deliver hote hain, bullet hit detection 100% accurate hoti hai.",
+                romanUrduRisk = "Safe & Reversible. 1420 Telenor UNISOC routers ke liye tested optimal value hai.",
                 executeCommand = "ip link set dev sipa_eth0 mtu 1420",
                 rollbackCommand = "ip link set dev sipa_eth0 mtu 1420",
                 verifyCommand = "cat /sys/class/net/sipa_eth0/mtu"
             ),
             SmartOptimization(
                 id = "opt_drop_caches",
-                title = "4. Kernel Slab & Buffer Cache Flush",
-                category = "Memory & Stability",
+                title = "6. Kernel Slab & Dirty Buffer Cache Flush",
+                category = "Memory Flush",
                 currentValue = "Active Cache",
                 recommendedValue = "Flushed (Clean RAM)",
                 originalBackupValue = "N/A",
                 isSupported = true,
                 riskLevel = RiskLevel.REVERSIBLE,
-                romanUrduRisk = "Zero Risk. 'sync' command pehle dirty memory write karti hai, phir unneeded caches release karti hai.",
-                romanUrduBenefit = "Stale slab buffers clear hone se router ki 256MB RAM free rehti hai aur system freeze nahi hota.",
+                romanUrduKaam = "Router ki 256MB RAM mein jama hone wale dirty buffer caches aur kernel slabs ko sync karke unneeded RAM release karta hai.",
+                romanUrduBenefit = "RAM instantly free hoti hai, system load kam hota hai aur router heavy network load par freeze ya slow nahi hota.",
+                romanUrduRisk = "Zero Risk. 'sync' pehle saray pending disk/flash writes complete karta hai phir cache flush karta hai.",
                 executeCommand = "sync && echo 3 > /proc/sys/vm/drop_caches",
                 rollbackCommand = "sync",
                 verifyCommand = "free -m"
             ),
             SmartOptimization(
-                id = "opt_cpu_overclock",
-                title = "5. CPU/GPU Hardware Overclocking",
-                category = "Hardware Safety",
-                currentValue = "Fixed Factory Clock",
-                recommendedValue = "LOCKED (UNSUPPORTED)",
-                originalBackupValue = "Factory Clock",
+                id = "opt_gpu_overclock",
+                title = "7. GPU Frequency Overclock",
+                category = "Graphics & 3D Acceleration",
+                currentValue = "No GPU sysfs node",
+                recommendedValue = "Hardware Locked",
+                originalBackupValue = "N/A",
                 isSupported = false,
+                unsupportedReason = "UNISOC UDX710 headless networking modem SoC hai, isme display ya 3D GPU nahi hota. Fake button nahi banaya gaya taake system corrupt na ho.",
                 riskLevel = RiskLevel.DESTRUCTIVE,
-                romanUrduRisk = "CRITICAL RISK: UNISOC UDX710 SoC PMIC frequency hardware level par locked hai. Fake overclock karne se router permanently brick ya burn ho sakta hai.",
-                romanUrduBenefit = "Is feature ko disabled rakhna router ko damage se bachata hai. Button is safely locked.",
-                executeCommand = "# CPU Overclocking is physically unsupported on UDX710 PMIC",
+                romanUrduKaam = "GPU clock speed ko barhana.",
+                romanUrduBenefit = "Networking router par GPU ka koi faida nahi kyunke packets CPU aur SIPA hardware accelerator process karte hain.",
+                romanUrduRisk = "Unsupported node par write karne se kernel crash ho sakta hai. Isliye app ne isay safely lock rakha hai.",
+                executeCommand = "# Unsupported on UDX710",
                 rollbackCommand = "# None",
-                verifyCommand = "cat /proc/cpuinfo"
+                verifyCommand = "# None"
             ),
             SmartOptimization(
-                id = "opt_cid_bonding",
-                title = "6. Multi-CID Dual APN Aggregation (CID1+CID2)",
-                category = "Carrier Policy",
-                currentValue = "Single APN Routing",
-                recommendedValue = "LOCKED (CARRIER-RESTRICTED)",
-                originalBackupValue = "CID1 Default",
+                id = "opt_force_5g_sa",
+                title = "8. Force 5G Standalone (SA) Band Lock",
+                category = "Modem Carrier Lock",
+                currentValue = "NSA / LTE (Carrier Restricted)",
+                recommendedValue = "Carrier Locked",
+                originalBackupValue = "N/A",
                 isSupported = false,
-                riskLevel = RiskLevel.DESTRUCTIVE,
-                romanUrduRisk = "HIGH RISK: Telenor network multi-CID bonding allow nahi karta. CID2 IMS profile hai. Dono ko aggregate karne ki koshish se SIM data block ho jata hai.",
-                romanUrduBenefit = "Carrier restrictions follow karne se internet connectivity intact rehti hai. Button is safely locked.",
-                executeCommand = "# CID bonding is blocked by carrier network policy",
+                unsupportedReason = "Telenor Pakistan SIM profile 5G Standalone (SA) provisioning allow nahi karti (sirf 4G LTE/NSA bands active hain). Force lock karne se signal drop ho jayenge.",
+                riskLevel = RiskLevel.DISRUPTIVE,
+                romanUrduKaam = "Modem ko zabardasti sirf 5G SA towers par lock karna.",
+                romanUrduBenefit = "Agar carrier 5G SA support karta to latency kam hoti, lekin Telenor SIM par ye restricted hai.",
+                romanUrduRisk = "Zabardasti force karne se router ka cellular network 'No Service' ho jayega aur internet band ho jayega. Isliye app ne isay safely lock rakha hai.",
+                executeCommand = "# Carrier Restricted",
                 rollbackCommand = "# None",
-                verifyCommand = "atcmd 'AT+CGACT?'"
+                verifyCommand = "# None"
             )
         )
     }

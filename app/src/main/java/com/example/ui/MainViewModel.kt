@@ -218,11 +218,19 @@ class MainViewModel : ViewModel() {
             val verifyRes = sessionManager.executeCommand(opt.verifyCommand)
             val isSuccess = execRes.isSuccess && !verifyRes.output.contains("error", ignoreCase = true)
 
+            val rawRouterResponse = buildString {
+                appendLine("$ ${opt.executeCommand}")
+                appendLine(if (execRes.output.isNotBlank()) execRes.output.trim() else "(Command executed successfully - exit 0)")
+                appendLine("$ ${opt.verifyCommand}")
+                append(verifyRes.output.trim())
+            }
+
             aiScanner.updateOptimizationStatus(
                 id = opt.id,
                 isApplied = isSuccess,
                 currentVal = verifyRes.output.trim().take(30),
-                logMsg = if (isSuccess) "Applied & Verified: ${verifyRes.output.trim()}" else "Execution failed: ${execRes.errorMessage}"
+                logMsg = if (isSuccess) "Applied & Verified: ${verifyRes.output.trim()}" else "Execution failed: ${execRes.errorMessage}",
+                routerResp = rawRouterResponse
             )
 
             sessionManager.addAuditLog(
@@ -241,11 +249,19 @@ class MainViewModel : ViewModel() {
             val execRes = sessionManager.executeCommand(opt.rollbackCommand)
             val verifyRes = sessionManager.executeCommand(opt.verifyCommand)
 
+            val rawRouterResponse = buildString {
+                appendLine("$ ${opt.rollbackCommand}")
+                appendLine(if (execRes.output.isNotBlank()) execRes.output.trim() else "(Rollback command executed - exit 0)")
+                appendLine("$ ${opt.verifyCommand}")
+                append(verifyRes.output.trim())
+            }
+
             aiScanner.updateOptimizationStatus(
                 id = opt.id,
                 isApplied = false,
                 currentVal = opt.originalBackupValue,
-                logMsg = "Restored to original backup: ${opt.originalBackupValue}"
+                logMsg = "Restored to original backup: ${opt.originalBackupValue}",
+                routerResp = rawRouterResponse
             )
 
             sessionManager.addAuditLog(

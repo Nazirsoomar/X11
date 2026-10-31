@@ -33,14 +33,17 @@ data class SmartOptimization(
     val originalBackupValue: String,
     val isApplied: Boolean = false,
     val isSupported: Boolean = true,
+    val unsupportedReason: String? = null,
     val riskLevel: RiskLevel = RiskLevel.REVERSIBLE,
+    val romanUrduKaam: String = "",
     val romanUrduRisk: String,
     val romanUrduBenefit: String,
     val executeCommand: String,
     val rollbackCommand: String,
     val verifyCommand: String,
     val lastExecutedTime: Long? = null,
-    val executionLog: String? = null
+    val executionLog: String? = null,
+    val routerResponse: String? = null
 )
 
 data class BufferbloatResult(

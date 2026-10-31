@@ -18,6 +18,11 @@ class UnisocRouterSimulator {
     private var sipaRpsCpus: String = "0"
     private var sipaXpsCpus: String = "0"
     private var sipaMtu: Int = 1420
+    private var sfpIpRelay: String = "none"
+    private var cpuGovernor: String = "schedutil"
+    private var cid2Apn: String = "internet"
+    private var cid2Active: Boolean = false
+    private var cid2DataMode: String = "NONE"
 
     fun execute(command: String): CommandExecutionResult {
         val trimmed = command.trim()
@@ -123,6 +128,44 @@ TX:
                     txCnt, 0, 0
                 )
             }
+            trimmed.contains("iprelay_manual") && trimmed.startsWith("cat") -> {
+                sfpIpRelay
+            }
+            trimmed.contains("iprelay_manual") && trimmed.startsWith("echo") -> {
+                val match = Regex("echo\\s+[\"']?([^\"'>]+)[\"']?\\s*>").find(trimmed)
+                if (match != null) sfpIpRelay = match.groupValues[1].trim()
+                ""
+            }
+            trimmed.contains("scaling_governor") && trimmed.startsWith("cat") -> {
+                cpuGovernor
+            }
+            trimmed.contains("scaling_governor") && trimmed.startsWith("echo") -> {
+                val match = Regex("echo\\s+([a-zA-Z0-9_-]+)\\s*>").find(trimmed)
+                if (match != null) cpuGovernor = match.groupValues[1].trim()
+                ""
+            }
+            trimmed.contains("scaling_available_governors") -> {
+                "conservative ondemand userspace powersave performance schedutil"
+            }
+            trimmed.contains("/sys/devices/system/cpu/cpufreq/policy*") -> {
+                "/sys/devices/system/cpu/cpufreq/policy0"
+            }
+            trimmed.contains("AT+CGDCONT=2") -> {
+                cid2Apn = "internet"
+                "OK"
+            }
+            trimmed.contains("AT+CGACT=1,2") -> {
+                cid2Active = true
+                "OK"
+            }
+            trimmed.contains("AT+CGACT=0,2") -> {
+                cid2Active = false
+                "OK"
+            }
+            trimmed.contains("AT+CGDATA=\"M-ETHER\",2") || trimmed.contains("AT+CGDATA='M-ETHER',2") -> {
+                cid2DataMode = "M-ETHER"
+                "CONNECT\nOK"
+            }
             trimmed.contains("AT+CSQ") -> {
                 "+CSQ: 26,99\nOK"
             }
@@ -131,12 +174,12 @@ TX:
             }
             trimmed.contains("AT+CGDCONT?") -> {
                 """+CGDCONT: 1,"IP","telenor","10.164.88.21",0,0
-+CGDCONT: 2,"IPV4V6","telenor.ims","",0,0
++CGDCONT: 2,"IP","$cid2Apn","10.164.88.22",0,0
 OK"""
             }
             trimmed.contains("AT+CGACT?") -> {
                 """+CGACT: 1,1
-+CGACT: 2,0
++CGACT: 2,${if (cid2Active) "1" else "0"}
 OK"""
             }
             trimmed.contains("AT+CGPADDR") -> {
